@@ -8,7 +8,7 @@ type RouteContext = {
   }>;
 };
 
-export async function POST(
+export async function PATCH(
   request: Request,
   context: RouteContext,
 ) {
@@ -24,12 +24,26 @@ export async function POST(
 
     if (user.role !== "ADMIN") {
       return NextResponse.json(
-        { error: "Admin access required." },
+        { error: "Administrator access required." },
         { status: 403 },
       );
     }
 
     const { depositId } = await context.params;
+
+    const body = await request.json();
+
+    const action = body.action;
+
+    if (action !== "APPROVE" && action !== "REJECT") {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid action. Use APPROVE or REJECT.",
+        },
+        { status: 400 },
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const deposit = await tx.deposit.findUnique({
@@ -49,19 +63,69 @@ export async function POST(
         throw new Error("DEPOSIT_ALREADY_PROCESSED");
       }
 
-      const wallet = await tx.wallet.upsert({
+      if (action === "REJECT") {
+        const rejected = await tx.deposit.update({
+          where: {
+            id: deposit.id,
+          },
+          data: {
+            status: "REJECTED",
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: user.id,
+            action: "DEPOSIT_REJECTED",
+            entity: "Deposit",
+            entityId: deposit.id,
+            description: `Deposit of R${Number(
+              deposit.amount,
+            ).toFixed(2)} rejected for ${deposit.user.email}.`,
+            metadata: {
+              depositId: deposit.id,
+              affectedUserId: deposit.userId,
+            },
+          },
+        });
+
+        return {
+          deposit: rejected,
+          wallet: null,
+        };
+      }
+
+      let wallet = await tx.wallet.findUnique({
         where: {
           userId: deposit.userId,
         },
-        update: {},
-        create: {
-          userId: deposit.userId,
-          balance: 0,
-          availableBalance: 0,
-        },
       });
 
-      const updatedDeposit = await tx.deposit.update({
+      if (!wallet) {
+        wallet = await tx.wallet.create({
+          data: {
+            userId: deposit.userId,
+            balance: deposit.amount,
+            availableBalance: deposit.amount,
+          },
+        });
+      } else {
+        wallet = await tx.wallet.update({
+          where: {
+            id: wallet.id,
+          },
+          data: {
+            balance: {
+              increment: deposit.amount,
+            },
+            availableBalance: {
+              increment: deposit.amount,
+            },
+          },
+        });
+      }
+
+      const completedDeposit = await tx.deposit.update({
         where: {
           id: deposit.id,
         },
@@ -70,30 +134,15 @@ export async function POST(
         },
       });
 
-      const updatedWallet = await tx.wallet.update({
-        where: {
-          id: wallet.id,
-        },
-        data: {
-          balance: {
-            increment: deposit.amount,
-          },
-          availableBalance: {
-            increment: deposit.amount,
-          },
-        },
-      });
-
-      await tx.transaction.create({
+      const transaction = await tx.transaction.create({
         data: {
           userId: deposit.userId,
           walletId: wallet.id,
           type: "DEPOSIT",
           status: "COMPLETED",
           amount: deposit.amount,
-          description: "Deposit approved by admin.",
-          reference:
-            deposit.reference ?? `DEP-${deposit.id}`,
+          reference: `DEP-${deposit.id}`,
+          description: `Verified deposit from ${deposit.user.email}.`,
         },
       });
 
@@ -103,33 +152,36 @@ export async function POST(
           action: "DEPOSIT_APPROVED",
           entity: "Deposit",
           entityId: deposit.id,
-          description:
-            `Deposit of R${deposit.amount.toString()} approved for ${deposit.user.email}.`,
+          description: `Deposit of R${Number(
+            deposit.amount,
+          ).toFixed(2)} approved and credited to ${deposit.user.email}.`,
           metadata: {
             depositId: deposit.id,
-            customerId: deposit.userId,
+            affectedUserId: deposit.userId,
+            walletId: wallet.id,
+            transactionId: transaction.id,
           },
         },
       });
 
       return {
-        deposit: updatedDeposit,
-        wallet: updatedWallet,
+        deposit: completedDeposit,
+        wallet,
       };
     });
 
+    if (action === "REJECT") {
+      return NextResponse.json({
+        message: "Deposit rejected successfully.",
+        deposit: result.deposit,
+      });
+    }
+
     return NextResponse.json({
-      message: "Deposit approved successfully.",
-      deposit: {
-        id: result.deposit.id,
-        amount: result.deposit.amount.toString(),
-        status: result.deposit.status,
-      },
-      wallet: {
-        balance: result.wallet.balance.toString(),
-        availableBalance:
-          result.wallet.availableBalance.toString(),
-      },
+      message:
+        "Deposit approved and wallet credited successfully.",
+      deposit: result.deposit,
+      wallet: result.wallet,
     });
   } catch (error) {
     console.error("Deposit approval error:", error);
@@ -145,7 +197,8 @@ export async function POST(
       if (error.message === "DEPOSIT_ALREADY_PROCESSED") {
         return NextResponse.json(
           {
-            error: "This deposit has already been processed.",
+            error:
+              "This deposit has already been processed.",
           },
           { status: 409 },
         );
@@ -153,7 +206,7 @@ export async function POST(
     }
 
     return NextResponse.json(
-      { error: "Unable to approve deposit." },
+      { error: "Unable to process deposit." },
       { status: 500 },
     );
   }
