@@ -1,4 +1,3 @@
-```tsx
 import WithdrawalForm from "./withdrawal-form";
 
 export default function WithdrawalPage() {
@@ -26,4 +25,3 @@ export default function WithdrawalPage() {
     </main>
   );
 }
-```

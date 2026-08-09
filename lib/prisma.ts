@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { PrismaClient } from "@/app/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -9,6 +10,9 @@ if (!connectionString) {
 
 const adapter = new PrismaPg({
   connectionString,
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 const globalForPrisma = globalThis as unknown as {

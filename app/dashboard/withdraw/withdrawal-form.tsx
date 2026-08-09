@@ -40,9 +40,10 @@ export default function WithdrawalForm() {
       setError("");
 
       const response = await fetch("/api/withdrawals", {
-        method: "GET",
-        cache: "no-store",
-      });
+  method: "GET",
+  cache: "no-store",
+  credentials: "include",
+});
 
       const data = await response.json();
 
@@ -119,10 +120,11 @@ export default function WithdrawalForm() {
       setSubmitting(true);
 
       const response = await fetch("/api/withdrawals", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+  method: "POST",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+  },
         body: JSON.stringify({
           amount: numericAmount,
           bankName: bankName.trim(),
