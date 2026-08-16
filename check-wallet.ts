@@ -1,6 +1,9 @@
-import { PrismaClient } from "./app/generated/prisma";
+﻿import "dotenv/config";
+import { PrismaClient } from "./app/generated/prisma/client";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasourceUrl: process.env.DATABASE_URL,
+});
 
 async function main() {
   const user = await prisma.user.findUnique({
@@ -31,4 +34,6 @@ async function main() {
 
 main()
   .catch(console.error)
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
