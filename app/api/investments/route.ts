@@ -40,7 +40,9 @@ export async function GET() {
         description: true,
         minimumAmount: true,
         dailyAmount: true,
+        dayAmount: true,
         totalAmount: true,
+        returnRate: true,
         durationDays: true,
       },
     });
@@ -107,6 +109,17 @@ export async function POST(request: Request) {
           id: planId,
           isActive: true,
         },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          minimumAmount: true,
+          dailyAmount: true,
+          dayAmount: true,
+          totalAmount: true,
+          returnRate: true,
+          durationDays: true,
+        },
       });
 
       if (!plan) {
@@ -115,7 +128,9 @@ export async function POST(request: Request) {
 
       const minimumAmount = Number(plan.minimumAmount);
       const dailyAmount = Number(plan.dailyAmount);
+      const dayAmount = Number(plan.dayAmount);
       const totalAmount = Number(plan.totalAmount);
+      const returnRate = Number(plan.returnRate);
       const durationDays = plan.durationDays;
 
       if (amount < minimumAmount) {
@@ -144,18 +159,16 @@ export async function POST(request: Request) {
       endDate.setDate(endDate.getDate() + durationDays);
 
       /*
-       * Store dailyAmount and totalAmount as snapshots.
+       * Investment only stores fields that actually exist
+       * on the production Investment table.
        *
-       * This means that if the plan is changed later,
-       * existing investments retain the original values.
+       * Plan values are obtained through the InvestmentPlan relation.
        */
       const investment = await tx.investment.create({
         data: {
           userId: user.id,
           planId: plan.id,
           amount,
-          dailyAmount,
-          totalAmount,
           startDate,
           endDate,
           earnedAmount: 0,
@@ -169,7 +182,9 @@ export async function POST(request: Request) {
               description: true,
               minimumAmount: true,
               dailyAmount: true,
+              dayAmount: true,
               totalAmount: true,
+              returnRate: true,
               durationDays: true,
             },
           },
@@ -208,7 +223,8 @@ export async function POST(request: Request) {
       });
 
       /*
-       * Store the plan snapshot in the audit log.
+       * Store the plan values used when the investment was created
+       * in the audit log.
        */
       await tx.auditLog.create({
         data: {
@@ -223,7 +239,9 @@ export async function POST(request: Request) {
             investmentAmount: amount,
             minimumAmount,
             dailyAmount,
+            dayAmount,
             totalAmount,
+            returnRate,
             durationDays,
             transactionId: transaction.id,
           },
@@ -238,7 +256,9 @@ export async function POST(request: Request) {
         planValues: {
           minimumAmount,
           dailyAmount,
+          dayAmount,
           totalAmount,
+          returnRate,
           durationDays,
         },
       };
@@ -252,13 +272,15 @@ export async function POST(request: Request) {
         investment: {
           id: result.investment.id,
           amount: result.investment.amount,
-          dailyAmount: result.investment.dailyAmount,
-          totalAmount: result.investment.totalAmount,
           startDate: result.investment.startDate,
           endDate: result.investment.endDate,
           earnedAmount: result.investment.earnedAmount,
           isActive: result.investment.isActive,
 
+          /*
+           * These values belong to the investment plan,
+           * not the Investment record itself.
+           */
           plan: result.investment.plan,
 
           values: result.planValues,
