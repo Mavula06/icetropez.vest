@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -37,8 +38,7 @@ export async function PATCH(
     if (action !== "APPROVE" && action !== "REJECT") {
       return NextResponse.json(
         {
-          error:
-            'Action must be either "APPROVE" or "REJECT".',
+          error: 'Action must be either "APPROVE" or "REJECT".',
         },
         { status: 400 },
       );
@@ -63,7 +63,9 @@ export async function PATCH(
       }
 
       /*
-       * REJECT
+       * =========================
+       * REJECT DEPOSIT
+       * =========================
        */
       if (action === "REJECT") {
         const rejectedDeposit = await tx.deposit.update({
@@ -85,20 +87,24 @@ export async function PATCH(
             metadata: {
               depositId: deposit.id,
               customerId: deposit.userId,
+              paymentReference: deposit.reference,
             },
           },
         });
 
         return {
-          action: "REJECT",
+          action: "REJECT" as const,
           deposit: rejectedDeposit,
           wallet: null,
         };
       }
 
       /*
-       * APPROVE
+       * =========================
+       * APPROVE DEPOSIT
+       * =========================
        */
+
       const wallet = await tx.wallet.upsert({
         where: {
           userId: deposit.userId,
@@ -111,6 +117,9 @@ export async function PATCH(
         },
       });
 
+      /*
+       * Mark the deposit as completed.
+       */
       const updatedDeposit = await tx.deposit.update({
         where: {
           id: deposit.id,
@@ -120,6 +129,9 @@ export async function PATCH(
         },
       });
 
+      /*
+       * Credit the user's wallet.
+       */
       const updatedWallet = await tx.wallet.update({
         where: {
           id: wallet.id,
@@ -134,20 +146,32 @@ export async function PATCH(
         },
       });
 
-      await tx.transaction.create({
+      /*
+       * IMPORTANT:
+       *
+       * Transaction.reference is UNIQUE in the database.
+       * Therefore we generate a unique internal transaction
+       * reference instead of using the customer's EFT reference.
+       */
+      const transactionReference = `DEP-${randomUUID()}`;
+
+      const transaction = await tx.transaction.create({
         data: {
           userId: deposit.userId,
           walletId: wallet.id,
           type: "DEPOSIT",
           status: "COMPLETED",
           amount: deposit.amount,
-          description: "Deposit approved by admin.",
-          reference:
-            deposit.reference ??
-            `DEP-${deposit.id}`,
+          description: deposit.reference
+            ? `EFT deposit approved. Payment reference: ${deposit.reference}`
+            : "EFT deposit approved by admin.",
+          reference: transactionReference,
         },
       });
 
+      /*
+       * Audit the approval.
+       */
       await tx.auditLog.create({
         data: {
           userId: user.id,
@@ -158,16 +182,27 @@ export async function PATCH(
           metadata: {
             depositId: deposit.id,
             customerId: deposit.userId,
+            paymentReference: deposit.reference,
+            transactionId: transaction.id,
+            transactionReference,
+            amount: deposit.amount.toString(),
           },
         },
       });
 
       return {
-        action: "APPROVE",
+        action: "APPROVE" as const,
         deposit: updatedDeposit,
         wallet: updatedWallet,
+        transaction,
       };
     });
+
+    /*
+     * =========================
+     * RESPONSE
+     * =========================
+     */
 
     if (result.action === "REJECT") {
       return NextResponse.json({
@@ -192,6 +227,12 @@ export async function PATCH(
         availableBalance:
           result.wallet!.availableBalance.toString(),
       },
+      transaction: {
+        id: result.transaction.id,
+        reference: result.transaction.reference,
+        amount: result.transaction.amount.toString(),
+        status: result.transaction.status,
+      },
     });
   } catch (error) {
     console.error("Deposit processing error:", error);
@@ -204,15 +245,26 @@ export async function PATCH(
         );
       }
 
-      if (
-        error.message === "DEPOSIT_ALREADY_PROCESSED"
-      ) {
+      if (error.message === "DEPOSIT_ALREADY_PROCESSED") {
         return NextResponse.json(
           {
-            error:
-              "This deposit has already been processed.",
+            error: "This deposit has already been processed.",
           },
           { status: 409 },
+        );
+      }
+
+      /*
+       * Return the actual Prisma error during development.
+       * This makes future database problems much easier to diagnose.
+       */
+      if (process.env.NODE_ENV !== "production") {
+        return NextResponse.json(
+          {
+            error: "Unable to process deposit.",
+            details: error.message,
+          },
+          { status: 500 },
         );
       }
     }
