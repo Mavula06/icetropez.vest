@@ -39,8 +39,9 @@ export async function GET() {
         name: true,
         description: true,
         minimumAmount: true,
+        dailyAmount: true,
+        totalAmount: true,
         durationDays: true,
-        returnRate: true,
       },
     });
 
@@ -97,6 +98,10 @@ export async function POST(request: Request) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      /*
+       * Always load the plan from the database.
+       * Never trust plan values supplied by the browser.
+       */
       const plan = await tx.investmentPlan.findFirst({
         where: {
           id: planId,
@@ -109,6 +114,9 @@ export async function POST(request: Request) {
       }
 
       const minimumAmount = Number(plan.minimumAmount);
+      const dailyAmount = Number(plan.dailyAmount);
+      const totalAmount = Number(plan.totalAmount);
+      const durationDays = plan.durationDays;
 
       if (amount < minimumAmount) {
         throw new Error("INVESTMENT_BELOW_MINIMUM");
@@ -133,13 +141,21 @@ export async function POST(request: Request) {
       const startDate = new Date();
 
       const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + plan.durationDays);
+      endDate.setDate(endDate.getDate() + durationDays);
 
+      /*
+       * Store dailyAmount and totalAmount as snapshots.
+       *
+       * This means that if the plan is changed later,
+       * existing investments retain the original values.
+       */
       const investment = await tx.investment.create({
         data: {
           userId: user.id,
           planId: plan.id,
           amount,
+          dailyAmount,
+          totalAmount,
           startDate,
           endDate,
           earnedAmount: 0,
@@ -152,13 +168,17 @@ export async function POST(request: Request) {
               name: true,
               description: true,
               minimumAmount: true,
+              dailyAmount: true,
+              totalAmount: true,
               durationDays: true,
-              returnRate: true,
             },
           },
         },
       });
 
+      /*
+       * Deduct only the amount actually invested.
+       */
       const updatedWallet = await tx.wallet.update({
         where: {
           id: wallet.id,
@@ -187,6 +207,9 @@ export async function POST(request: Request) {
         },
       });
 
+      /*
+       * Store the plan snapshot in the audit log.
+       */
       await tx.auditLog.create({
         data: {
           userId: user.id,
@@ -197,9 +220,11 @@ export async function POST(request: Request) {
           metadata: {
             investmentId: investment.id,
             planId: plan.id,
-            amount,
-            durationDays: plan.durationDays,
-            returnRate: Number(plan.returnRate),
+            investmentAmount: amount,
+            minimumAmount,
+            dailyAmount,
+            totalAmount,
+            durationDays,
             transactionId: transaction.id,
           },
         },
@@ -209,6 +234,13 @@ export async function POST(request: Request) {
         investment,
         wallet: updatedWallet,
         transaction,
+
+        planValues: {
+          minimumAmount,
+          dailyAmount,
+          totalAmount,
+          durationDays,
+        },
       };
     });
 
@@ -216,18 +248,32 @@ export async function POST(request: Request) {
       {
         message:
           "Investment created successfully. Your wallet balance has been updated.",
+
         investment: {
           id: result.investment.id,
           amount: result.investment.amount,
+          dailyAmount: result.investment.dailyAmount,
+          totalAmount: result.investment.totalAmount,
           startDate: result.investment.startDate,
           endDate: result.investment.endDate,
           earnedAmount: result.investment.earnedAmount,
           isActive: result.investment.isActive,
+
           plan: result.investment.plan,
+
+          values: result.planValues,
         },
+
         wallet: {
           balance: result.wallet.balance,
           availableBalance: result.wallet.availableBalance,
+        },
+
+        transaction: {
+          id: result.transaction.id,
+          reference: result.transaction.reference,
+          amount: result.transaction.amount,
+          status: result.transaction.status,
         },
       },
       { status: 201 },
@@ -239,13 +285,17 @@ export async function POST(request: Request) {
       switch (error.message) {
         case "INVESTMENT_PLAN_NOT_FOUND":
           return NextResponse.json(
-            { error: "The selected investment plan is not available." },
+            {
+              error: "The selected investment plan is not available.",
+            },
             { status: 404 },
           );
 
         case "INVESTMENT_BELOW_MINIMUM":
           return NextResponse.json(
-            { error: "The investment amount is below the plan minimum." },
+            {
+              error: "The investment amount is below the plan minimum.",
+            },
             { status: 400 },
           );
 

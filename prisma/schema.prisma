@@ -136,9 +136,17 @@ model InvestmentPlan {
   name        String
   description String?
 
+  // PRICE â€” amount required to purchase the plan
   minimumAmount Decimal @db.Decimal(18, 2)
-  durationDays  Int
-  returnRate    Decimal @db.Decimal(10, 4)
+
+  // DAILY â€” amount credited per investment day
+  dailyAmount Decimal @db.Decimal(18, 2)
+
+  // TOTAL â€” final plan amount at maturity
+  totalAmount Decimal @db.Decimal(18, 2)
+
+  // Investment duration
+  durationDays Int
 
   isActive Boolean @default(true)
 
@@ -155,7 +163,14 @@ model Investment {
   userId String
   planId String
 
+  // PRICE actually paid by the user
   amount Decimal @db.Decimal(18, 2)
+
+  // Snapshot of plan DAILY value
+  dailyAmount Decimal @db.Decimal(18, 2)
+
+  // Snapshot of plan TOTAL value
+  totalAmount Decimal @db.Decimal(18, 2)
 
   startDate DateTime
   endDate   DateTime
@@ -228,7 +243,8 @@ model Referral {
 
   createdAt DateTime @default(now())
 
-  referrer     User @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referrer User @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+
   referredUser User @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
 
   @@unique([referrerId, referredUserId])

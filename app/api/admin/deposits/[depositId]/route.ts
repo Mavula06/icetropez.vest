@@ -8,7 +8,7 @@ type RouteContext = {
   }>;
 };
 
-export async function POST(
+export async function PATCH(
   request: Request,
   context: RouteContext,
 ) {
@@ -24,12 +24,25 @@ export async function POST(
 
     if (user.role !== "ADMIN") {
       return NextResponse.json(
-        { error: "Admin access required." },
+        { error: "Administrator access required." },
         { status: 403 },
       );
     }
 
     const { depositId } = await context.params;
+
+    const body = await request.json();
+    const action = body.action;
+
+    if (action !== "APPROVE" && action !== "REJECT") {
+      return NextResponse.json(
+        {
+          error:
+            'Action must be either "APPROVE" or "REJECT".',
+        },
+        { status: 400 },
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const deposit = await tx.deposit.findUnique({
@@ -49,6 +62,43 @@ export async function POST(
         throw new Error("DEPOSIT_ALREADY_PROCESSED");
       }
 
+      /*
+       * REJECT
+       */
+      if (action === "REJECT") {
+        const rejectedDeposit = await tx.deposit.update({
+          where: {
+            id: deposit.id,
+          },
+          data: {
+            status: "CANCELLED",
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: user.id,
+            action: "DEPOSIT_REJECTED",
+            entity: "Deposit",
+            entityId: deposit.id,
+            description: `Deposit of R${deposit.amount.toString()} rejected for ${deposit.user.email}.`,
+            metadata: {
+              depositId: deposit.id,
+              customerId: deposit.userId,
+            },
+          },
+        });
+
+        return {
+          action: "REJECT",
+          deposit: rejectedDeposit,
+          wallet: null,
+        };
+      }
+
+      /*
+       * APPROVE
+       */
       const wallet = await tx.wallet.upsert({
         where: {
           userId: deposit.userId,
@@ -91,7 +141,7 @@ export async function POST(
           type: "DEPOSIT",
           status: "COMPLETED",
           amount: deposit.amount,
-          description: `Deposit approved by admin.`,
+          description: "Deposit approved by admin.",
           reference:
             deposit.reference ??
             `DEP-${deposit.id}`,
@@ -113,10 +163,22 @@ export async function POST(
       });
 
       return {
+        action: "APPROVE",
         deposit: updatedDeposit,
         wallet: updatedWallet,
       };
     });
+
+    if (result.action === "REJECT") {
+      return NextResponse.json({
+        message: "Deposit rejected successfully.",
+        deposit: {
+          id: result.deposit.id,
+          amount: result.deposit.amount.toString(),
+          status: result.deposit.status,
+        },
+      });
+    }
 
     return NextResponse.json({
       message: "Deposit approved successfully.",
@@ -126,12 +188,13 @@ export async function POST(
         status: result.deposit.status,
       },
       wallet: {
-        balance: result.wallet.balance.toString(),
-        availableBalance: result.wallet.availableBalance.toString(),
+        balance: result.wallet!.balance.toString(),
+        availableBalance:
+          result.wallet!.availableBalance.toString(),
       },
     });
   } catch (error) {
-    console.error("Deposit approval error:", error);
+    console.error("Deposit processing error:", error);
 
     if (error instanceof Error) {
       if (error.message === "DEPOSIT_NOT_FOUND") {
@@ -141,16 +204,21 @@ export async function POST(
         );
       }
 
-      if (error.message === "DEPOSIT_ALREADY_PROCESSED") {
+      if (
+        error.message === "DEPOSIT_ALREADY_PROCESSED"
+      ) {
         return NextResponse.json(
-          { error: "This deposit has already been processed." },
+          {
+            error:
+              "This deposit has already been processed.",
+          },
           { status: 409 },
         );
       }
     }
 
     return NextResponse.json(
-      { error: "Unable to approve deposit." },
+      { error: "Unable to process deposit." },
       { status: 500 },
     );
   }

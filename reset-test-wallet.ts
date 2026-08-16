@@ -22,27 +22,37 @@ async function main() {
 
   const user = await prisma.user.findUnique({
     where: { email },
+    include: { wallet: true },
   });
 
   if (!user) {
     throw new Error(`User ${email} was not found.`);
   }
 
-  const updated = await prisma.user.update({
-    where: { id: user.id },
+  if (!user.wallet) {
+    throw new Error(`Wallet for ${email} was not found.`);
+  }
+
+  console.log("Before reset:");
+  console.log("Balance:", user.wallet.balance.toString());
+  console.log("Available:", user.wallet.availableBalance.toString());
+
+  const wallet = await prisma.wallet.update({
+    where: {
+      id: user.wallet.id,
+    },
     data: {
-      role: "ADMIN",
+      balance: 0,
+      availableBalance: 0,
     },
   });
 
-  console.log("================================");
-  console.log("ADMIN USER UPDATED");
-  console.log("================================");
-  console.log("ID:", updated.id);
-  console.log("Email:", updated.email);
-  console.log("Name:", updated.firstName, updated.lastName);
-  console.log("Role:", updated.role);
-  console.log("================================");
+  console.log("");
+  console.log("========== WALLET RESET ==========");
+  console.log("User:", email);
+  console.log("Balance:", wallet.balance.toString());
+  console.log("Available Balance:", wallet.availableBalance.toString());
+  console.log("==================================");
 }
 
 main()
