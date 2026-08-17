@@ -1,3 +1,4 @@
+import MyInvestments from "./my-investments";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
@@ -34,6 +35,13 @@ export default async function InvestmentsPage() {
             available wallet balance.
           </p>
         </div>
+<div className="mt-10">
+  <h2 className="mb-6 text-2xl font-bold text-white">
+    My Investments
+  </h2>
+
+  <MyInvestments />
+</div>
 
         <div className="mt-8">
           <InvestmentPlans />

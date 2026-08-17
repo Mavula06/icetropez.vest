@@ -8,67 +8,12 @@ type InvestmentPlan = {
   name: string;
   description?: string | null;
   minimumAmount: string | number;
+  dailyAmount: string | number;
+  dayAmount: string | number;
+  totalAmount: string | number;
+  returnRate: string | number;
   durationDays: number;
 };
-
-type DisplayPlan = {
-  name: string;
-  price: number;
-  daily: number;
-  day: number;
-  total: number;
-  durationDays: number;
-  description: string;
-  id?: string;
-};
-
-const PLANS: DisplayPlan[] = [
-  {
-    name: "ICETROPEZ PLAN-A",
-    price: 180,
-    daily: 30,
-    day: 150,
-    total: 4500,
-    durationDays: 25,
-    description: "Starter investment plan",
-  },
-  {
-    name: "ICETROPEZ PLAN-B",
-    price: 580,
-    daily: 100,
-    day: 150,
-    total: 15000,
-    durationDays: 25,
-    description: "Growth investment plan",
-  },
-  {
-    name: "ICETROPEZ PLAN-C",
-    price: 1800,
-    daily: 410,
-    day: 150,
-    total: 61500,
-    durationDays: 25,
-    description: "Advanced investment plan",
-  },
-  {
-    name: "ICETROPEZ PLAN-D",
-    price: 4400,
-    daily: 1100,
-    day: 150,
-    total: 16500,
-    durationDays: 25,
-    description: "Premium investment plan",
-  },
-  {
-    name: "ICETROPEZ PLAN-E",
-    price: 98000,
-    daily: 2659,
-    day: 150,
-    total: 397500,
-    durationDays: 25,
-    description: "Elite investment plan",
-  },
-];
 
 function formatRand(amount: number) {
   return `R${amount.toLocaleString("en-ZA", {
@@ -77,43 +22,56 @@ function formatRand(amount: number) {
   })}`;
 }
 
+function numberValue(value: string | number) {
+  return Number(value);
+}
+
 export default function InvestmentPlans() {
-  const [plans, setPlans] = useState<DisplayPlan[]>(PLANS);
+  const [plans, setPlans] = useState<InvestmentPlan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     async function loadPlans() {
       try {
+        setLoading(true);
+        setError("");
+
         const response = await fetch("/api/investments", {
           method: "GET",
           cache: "no-store",
         });
 
+        const data = await response.json();
+
         if (!response.ok) {
+          setError(data?.error ?? "Unable to load investment plans.");
           return;
         }
 
-        const data = await response.json();
-
-        const databasePlans: InvestmentPlan[] =
-          data.plans ?? data.investmentPlans ?? [];
+        const databasePlans: InvestmentPlan[] = data.plans ?? [];
 
         /*
-         * The UI uses the five Icetropez plans above.
+         * Only display the five Icetropez plans.
          *
-         * If database plans exist, attach their IDs so the
-         * existing investment detail route continues to work.
+         * We use the REAL database ID from each plan.
+         * We do NOT match plans by array index.
          */
-        if (databasePlans.length > 0) {
-          setPlans(
-            PLANS.map((plan, index) => ({
-              ...plan,
-              id: databasePlans[index]?.id,
-            })),
-          );
-        }
+        const icetropezPlans = databasePlans
+          .filter((plan) =>
+            /^ICETROPEZ PLAN-[A-E]$/i.test(plan.name),
+          )
+          .sort((a, b) => {
+            const aLetter = a.name.slice(-1).toUpperCase();
+            const bLetter = b.name.slice(-1).toUpperCase();
+
+            return aLetter.localeCompare(bLetter);
+          });
+
+        setPlans(icetropezPlans);
       } catch (error) {
         console.error("Unable to load investment plans:", error);
+        setError("Unable to connect to the server.");
       } finally {
         setLoading(false);
       }
@@ -125,12 +83,34 @@ export default function InvestmentPlans() {
   if (loading) {
     return (
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {PLANS.map((plan) => (
+        {[1, 2, 3, 4, 5].map((item) => (
           <div
-            key={plan.name}
+            key={item}
             className="h-[390px] animate-pulse rounded-3xl border border-white/10 bg-slate-900/70"
           />
         ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-300">
+        {error}
+      </div>
+    );
+  }
+
+  if (plans.length === 0) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-slate-900 p-8 text-center">
+        <h2 className="text-xl font-bold text-white">
+          No investment plans available
+        </h2>
+
+        <p className="mt-2 text-slate-400">
+          Please try again later.
+        </p>
       </div>
     );
   }
@@ -139,7 +119,7 @@ export default function InvestmentPlans() {
     <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
       {plans.map((plan, index) => (
         <InvestmentCard
-          key={plan.name}
+          key={plan.id}
           plan={plan}
           featured={index === 1}
         />
@@ -152,9 +132,14 @@ function InvestmentCard({
   plan,
   featured,
 }: {
-  plan: DisplayPlan;
+  plan: InvestmentPlan;
   featured?: boolean;
 }) {
+  const price = numberValue(plan.minimumAmount);
+  const daily = numberValue(plan.dailyAmount);
+  const day = numberValue(plan.dayAmount);
+  const total = numberValue(plan.totalAmount);
+
   return (
     <div
       className={[
@@ -165,10 +150,8 @@ function InvestmentCard({
         featured ? "ring-1 ring-emerald-400/30" : "",
       ].join(" ")}
     >
-      {/* Decorative glow */}
       <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-emerald-500/10 blur-3xl transition group-hover:bg-emerald-400/20" />
 
-      {/* Header */}
       <div className="relative border-b border-white/10 p-6">
         {featured && (
           <span className="mb-3 inline-flex rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-300">
@@ -181,31 +164,30 @@ function InvestmentCard({
         </h2>
 
         <p className="mt-1 text-sm text-slate-400">
-          {plan.description}
+          {plan.description ?? "Investment plan"}
         </p>
       </div>
 
-      {/* Investment table */}
       <div className="relative p-6">
         <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]">
           <InvestmentRow
             label="PRICE"
-            value={formatRand(plan.price)}
+            value={formatRand(price)}
           />
 
           <InvestmentRow
             label="DAILY"
-            value={formatRand(plan.daily)}
+            value={formatRand(daily)}
           />
 
           <InvestmentRow
             label="DAY"
-            value={formatRand(plan.day)}
+            value={formatRand(day)}
           />
 
           <InvestmentRow
             label="TOTAL"
-            value={formatRand(plan.total)}
+            value={formatRand(total)}
             highlight
           />
 
@@ -215,24 +197,13 @@ function InvestmentCard({
           />
         </div>
 
-        {/* Invest button */}
         <div className="mt-6">
-          {plan.id ? (
-            <Link
-              href={`/dashboard/investments/${plan.id}`}
-              className="flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-5 py-3.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 active:scale-[0.98]"
-            >
-              INVEST NOW
-            </Link>
-          ) : (
-            <button
-              type="button"
-              disabled
-              className="flex w-full cursor-not-allowed items-center justify-center rounded-2xl bg-slate-700 px-5 py-3.5 text-sm font-bold text-slate-400"
-            >
-              INVEST NOW
-            </button>
-          )}
+          <Link
+            href={`/dashboard/investments/${plan.id}`}
+            className="flex w-full items-center justify-center rounded-2xl bg-emerald-500 px-5 py-3.5 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 active:scale-[0.98]"
+          >
+            INVEST NOW
+          </Link>
         </div>
       </div>
     </div>
